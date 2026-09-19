@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>美味餐車即時位置追蹤</title>
+  
+  <!-- Leaflet 地圖樣式 (免費地圖套件) -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  
+  <style>
+    body { font-family: sans-serif; margin: 0; padding: 15px; background: #fafafa; max-width: 600px; margin: 0 auto; }
+    .header { text-align: center; padding: 10px; }
+    .status-badge { display: inline-block; padding: 6px 16px; border-radius: 20px; font-weight: bold; font-size: 18px; background: #eee; }
+    .broadcast-box { background: #fff3cd; border-left: 5px solid #ffc107; padding: 12px; margin: 15px 0; border-radius: 4px; }
+    #map { height: 300px; width: 100%; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.15); }
+    .nav-btn { display: block; width: 100%; padding: 15px 0; margin-top: 15px; background: #28a745; color: white; text-align: center; font-size: 18px; font-weight: bold; border-radius: 8px; text-decoration: none; box-shadow: 0 4px 6px rgba(40,167,69,0.3); }
+  </style>
+
+  <!-- Firebase & Leaflet 地圖 SDK -->
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+</head>
+<body>
+
+  <div class="header">
+    <h2>🍔 美味餐車專屬定位頁面</h2>
+    <div id="statusBadge" class="status-badge">🔄 讀取狀態中...</div>
+  </div>
+
+  <!-- 老闆最新廣播 -->
+  <div class="broadcast-box">
+    <strong>📢 最新公告：</strong>
+    <span id="broadcastText">目前無廣播訊息</span>
+  </div>
+
+  <!-- 地圖呈現 -->
+  <div id="map"></div>
+
+  <!-- Google Maps 一鍵導航按鈕 -->
+  <a id="navBtn" href="#" target="_blank" class="nav-btn">🚗 帶我去餐車 (開啟 Google 地圖)</a>
+
+  <script>
+    // 已經為您填入與老闆端同步的 Food truck 專案資訊！
+    // ⚠️ 請記得將 "YOUR_API_KEY" 與 "YOUR_APP_ID" 替換成與老闆端相同的實際數值。
+    const firebaseConfig = {
+      apiKey: "YOUR_API_KEY", 
+      authDomain: "food-truck-1f6aa.firebaseapp.com",
+      databaseURL: "https://food-truck-1f6aa-default-rtdb.firebaseio.com",
+      projectId: "food-truck-1f6aa",
+      storageBucket: "food-truck-1f6aa.firebasestorage.app",
+      messagingSenderId: "1061981192488",
+      appId: "YOUR_APP_ID" 
+    };
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.database().ref('foodtruck');
+
+    // 初始化 Leaflet 地圖 (預設中心點設為台灣)
+    const map = L.map('map').setView([22.627, 120.358], 15);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '© OpenStreetMap'
+    }).addTo(map);
+
+    let marker = null;
+
+    // 監聽 Firebase 即時資料庫變動
+    db.on('value', (snapshot) => {
+      const data = snapshot.val();
+      if (!data) return;
+
+      // 1. 更新營業狀態
+      if (data.status) {
+        document.getElementById('statusBadge').innerText = data.status;
+      }
+
+      // 2. 更新廣播訊息
+      if (data.broadcast) {
+        document.getElementById('broadcastText').innerText = data.broadcast;
+      }
+
+      // 3. 更新地圖位置與導航按鈕
+      if (data.lat && data.lng) {
+        const lat = data.lat;
+        const lng = data.lng;
+
+        // 地圖移至新位置
+        map.setView([lat, lng], 17);
+
+        // 更新地圖上的標記
+        if (marker) {
+          marker.setLatLng([lat, lng]);
+        } else {
+          marker = L.marker([lat, lng]).addTo(map).bindPopup("<b>餐車目前位置</b>").openPopup();
+        }
+
+        // 更新「帶我去餐車」按鈕的 Google Maps 導航連結
+        const navUrl = `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`;
+        document.getElementById('navBtn').href = navUrl;
+      }
+    });
+  </script>
+</body>
+</html>

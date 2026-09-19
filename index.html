@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>餐車老闆管理後台</title>
+  <style>
+    body { font-family: sans-serif; padding: 20px; background: #f4f4f9; max-width: 500px; margin: 0 auto; }
+    .card { background: white; padding: 15px; border-radius: 10px; margin-bottom: 15px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+    button { width: 100%; padding: 12px; margin: 5px 0; border: none; border-radius: 6px; font-size: 16px; font-weight: bold; cursor: pointer; }
+    .btn-open { background: #4CAF50; color: white; }
+    .btn-prep { background: #FF9800; color: white; }
+    .btn-close { background: #f44336; color: white; }
+    .btn-gps { background: #2196F3; color: white; }
+    .btn-speech { background: #9C27B0; color: white; }
+    input[type="text"] { width: 95%; padding: 10px; margin: 8px 0; font-size: 15px; }
+    .status-text { font-weight: bold; color: #333; }
+  </style>
+  <!-- Firebase 7.x/8.x Compat SDK -->
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
+</head>
+<body>
+
+  <h2>🚚 餐車即時管理控制台</h2>
+
+  <!-- 1. 營業狀態設定 -->
+  <div class="card">
+    <h3>1. 切換營業狀態</h3>
+    <button class="btn-open" onclick="setStatus('🟢 營業中')">🟢 設定為：營業中</button>
+    <button class="btn-prep" onclick="setStatus('🟡 準備中')">🟡 設定為：準備中</button>
+    <button class="btn-close" onclick="setStatus('🔴 休息中')">🔴 設定為：休息中</button>
+    <p>目前狀態：<span id="currentStatus" class="status-text">未設定</span></p>
+  </div>
+
+  <!-- 2. 廣播訊息與語音輸入 -->
+  <div class="card">
+    <h3>2. 發布最新廣播</h3>
+    <input type="text" id="broadcastMsg" placeholder="例如：今天在公園旁，招牌牛肉堡熱賣中！">
+    <button class="btn-speech" onclick="startSpeech()">🎤 語音轉文字輸入</button>
+    <button class="btn-gps" style="background:#009688" onclick="sendBroadcast()">📢 發布廣播</button>
+  </div>
+
+  <!-- 3. GPS 定位開關 -->
+  <div class="card">
+    <h3>3. GPS 定位追蹤</h3>
+    <button class="btn-gps" id="gpsBtn" onclick="toggleGPS()">📡 開啟即時定位上傳</button>
+    <p>目前定位：<span id="gpsCoords" class="status-text">未開啟</span></p>
+  </div>
+
+  <script>
+    // 已經為您填入 Food truck 專案的專屬資訊！
+    // ⚠️ 請記得將 "YOUR_API_KEY" 與 "YOUR_APP_ID" 替換成您在 Firebase 控制台取得的實際數值。
+    const firebaseConfig = {
+      apiKey: "YOUR_API_KEY", 
+      authDomain: "food-truck-1f6aa.firebaseapp.com",
+      databaseURL: "https://food-truck-1f6aa-default-rtdb.firebaseio.com",
+      projectId: "food-truck-1f6aa",
+      storageBucket: "food-truck-1f6aa.firebasestorage.app",
+      messagingSenderId: "1061981192488",
+      appId: "YOUR_APP_ID" 
+    };
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.database().ref('foodtruck');
+
+    let watchId = null;
+
+    // 更新狀態
+    function setStatus(status) {
+      db.update({ status: status });
+      document.getElementById('currentStatus').innerText = status;
+    }
+
+    // 發布廣播訊息
+    function sendBroadcast() {
+      const msg = document.getElementById('broadcastMsg').value;
+      if (msg) {
+        db.update({ broadcast: msg, updatedAt: new Date().toLocaleTimeString() });
+        alert('廣播已發布！');
+      }
+    }
+
+    // 語音轉文字 (Web Speech API)
+    function startSpeech() {
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!SpeechRecognition) {
+        alert('您的瀏覽器不支援語音識別，請使用 Chrome 瀏覽器。');
+        return;
+      }
+      const recognition = new SpeechRecognition();
+      recognition.lang = 'zh-TW';
+      recognition.onresult = function(event) {
+        const text = event.results[0][0].transcript;
+        document.getElementById('broadcastMsg').value = text;
+      };
+      recognition.start();
+    }
+
+    // 切換 GPS 自動上傳
+    function toggleGPS() {
+      const btn = document.getElementById('gpsBtn');
+      if (watchId === null) {
+        if ("geolocation" in navigator) {
+          watchId = navigator.geolocation.watchPosition(
+            (pos) => {
+              const lat = pos.coords.latitude;
+              const lng = pos.coords.longitude;
+              db.update({ lat: lat, lng: lng });
+              document.getElementById('gpsCoords').innerText = `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+            },
+            (err) => alert('無法取得 GPS 定位：' + err.message),
+            { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+          );
+          btn.innerText = "🛑 停止定位上傳";
+          btn.style.background = "#f44336";
+        } else {
+          alert('您的裝置不支援 GPS 定位');
+        }
+      } else {
+        navigator.geolocation.clearWatch(watchId);
+        watchId = null;
+        btn.innerText = "📡 開啟即時定位上傳";
+        btn.style.background = "#2196F3";
+        document.getElementById('gpsCoords').innerText = "已停止上傳";
+      }
+    }
+  </script>
+</body>
+</html>
