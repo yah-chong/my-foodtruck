@@ -13,10 +13,14 @@
     .btn-close { background: #f44336; color: white; }
     .btn-gps { background: #2196F3; color: white; }
     .btn-speech { background: #9C27B0; color: white; }
-    input[type="text"] { width: 95%; padding: 10px; margin: 8px 0; font-size: 15px; }
+    .btn-save-loc { background: #673AB7; color: white; }
+    .btn-del { background: #e53935; color: white; width: auto; padding: 4px 8px; font-size: 12px; margin: 0; }
+    input[type="text"] { width: 95%; padding: 10px; margin: 8px 0; font-size: 15px; border: 1px solid #ccc; border-radius: 4px; }
     .status-text { font-weight: bold; color: #333; }
+    .history-item { background: #f9f9f9; border-left: 4px solid #2196F3; padding: 8px 12px; margin: 6px 0; border-radius: 4px; display: flex; justify-content: space-between; align-items: center; }
+    .history-info { font-size: 14px; }
   </style>
-  <!-- Firebase 7.x/8.x Compat SDK -->
+  <!-- Firebase 8.x Compat SDK -->
   <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
   <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
 </head>
@@ -41,16 +45,24 @@
     <button class="btn-gps" style="background:#009688" onclick="sendBroadcast()">📢 發布廣播</button>
   </div>
 
-  <!-- 3. GPS 定位開關 -->
+  <!-- 3. GPS 定位追蹤 -->
   <div class="card">
-    <h3>3. GPS 定位追蹤</h3>
+    <h3>3. GPS 即時定位追蹤</h3>
     <button class="btn-gps" id="gpsBtn" onclick="toggleGPS()">📡 開啟即時定位上傳</button>
-    <p>目前定位：<span id="gpsCoords" class="status-text">未開啟</span></p>
+    <p>目前即時座標：<span id="gpsCoords" class="status-text">未開啟</span></p>
+  </div>
+
+  <!-- 4. 駐點位置歷史紀錄（最多10筆） -->
+  <div class="card">
+    <h3>4. 📍 打卡/紀錄駐點位置 (保留最新10筆)</h3>
+    <input type="text" id="locationNote" placeholder="例如：鳳山青年夜市 / 衛武營捷運站3號出口">
+    <button class="btn-save-loc" onclick="saveCurrentLocation()">📌 儲存當前位置至歷史清單</button>
+    
+    <h4 style="margin-top: 15px; margin-bottom: 5px;">📜 最新 10 個駐點歷史：</h4>
+    <div id="historyList">載入中...</div>
   </div>
 
   <script>
-    // 已經為您填入 Food truck 專案的專屬資訊！
-    // ⚠️ 請記得將 "YOUR_API_KEY" 與 "YOUR_APP_ID" 替換成您在 Firebase 控制台取得的實際數值。
     const firebaseConfig = {
       apiKey: "YOUR_API_KEY", 
       authDomain: "food-truck-1f6aa.firebaseapp.com",
@@ -64,14 +76,20 @@
     const db = firebase.database().ref('foodtruck');
 
     let watchId = null;
+    let currentLat = null;
+    let currentLng = null;
 
-    // 更新狀態
+    // 監聽即時營業狀態
+    db.child('status').on('value', (snap) => {
+      if(snap.exists()) document.getElementById('currentStatus').innerText = snap.val();
+    });
+
+    // 1. 更新營業狀態
     function setStatus(status) {
       db.update({ status: status });
-      document.getElementById('currentStatus').innerText = status;
     }
 
-    // 發布廣播訊息
+    // 2. 發布廣播訊息
     function sendBroadcast() {
       const msg = document.getElementById('broadcastMsg').value;
       if (msg) {
@@ -80,7 +98,7 @@
       }
     }
 
-    // 語音轉文字 (Web Speech API)
+    // 語音轉文字
     function startSpeech() {
       const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
       if (!SpeechRecognition) {
@@ -96,17 +114,17 @@
       recognition.start();
     }
 
-    // 切換 GPS 自動上傳
+    // 3. 切換 GPS 自動上傳
     function toggleGPS() {
       const btn = document.getElementById('gpsBtn');
       if (watchId === null) {
         if ("geolocation" in navigator) {
           watchId = navigator.geolocation.watchPosition(
             (pos) => {
-              const lat = pos.coords.latitude;
-              const lng = pos.coords.longitude;
-              db.update({ lat: lat, lng: lng });
-              document.getElementById('gpsCoords').innerText = `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+              currentLat = pos.coords.latitude;
+              currentLng = pos.coords.longitude;
+              db.update({ lat: currentLat, lng: currentLng });
+              document.getElementById('gpsCoords').innerText = `${currentLat.toFixed(5)}, ${currentLng.toFixed(5)}`;
             },
             (err) => alert('無法取得 GPS 定位：' + err.message),
             { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
@@ -124,6 +142,93 @@
         document.getElementById('gpsCoords').innerText = "已停止上傳";
       }
     }
+
+    // 4. 儲存當前位置至歷史紀錄，並維護「最多 10 筆」
+    function saveCurrentLocation() {
+      if (!currentLat || !currentLng) {
+        alert('請先開啟【GPS 即時定位上傳】以取得目前座標！');
+        return;
+      }
+
+      const noteInput = document.getElementById('locationNote');
+      const note = noteInput.value.trim() || '未命名營業地點';
+      const historyRef = db.child('history');
+
+      const now = new Date();
+      const timeStr = `${now.getMonth() + 1}/${now.getDate()} ${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
+
+      // 新增一筆位置
+      historyRef.push({
+        lat: currentLat,
+        lng: currentLng,
+        note: note,
+        timestamp: firebase.database.ServerValue.TIMESTAMP,
+        timeStr: timeStr
+      }, (error) => {
+        if (!error) {
+          noteInput.value = '';
+          alert('📌 已成功儲存位置！');
+          trimHistory(); // 檢查並維持最多 10 筆
+        } else {
+          alert('儲存失敗：' + error.message);
+        }
+      });
+    }
+
+    // 限制歷史紀錄只保留最新的 10 筆
+    function trimHistory() {
+      const historyRef = db.child('history');
+      historyRef.orderByChild('timestamp').once('value', (snapshot) => {
+        const total = snapshot.numChildren();
+        if (total > 10) {
+          let deleteCount = total - 10;
+          snapshot.forEach((child) => {
+            if (deleteCount > 0) {
+              child.ref.remove(); // 刪除最舊的資料
+              deleteCount--;
+            }
+          });
+        }
+      });
+    }
+
+    // 手動刪除單筆紀錄
+    function deleteHistoryItem(key) {
+      if (confirm('確定要刪除這筆位置紀錄嗎？')) {
+        db.child('history').child(key).remove();
+      }
+    }
+
+    // 實時監聽並顯示最新 10 筆歷史紀錄
+    db.child('history').orderByChild('timestamp').limitToLast(10).on('value', (snapshot) => {
+      const historyContainer = document.getElementById('historyList');
+      if (!snapshot.exists()) {
+        historyContainer.innerHTML = '<p style="color:#888;">目前尚無歷史位置紀錄。</p>';
+        return;
+      }
+
+      let items = [];
+      snapshot.forEach((child) => {
+        items.push({ key: child.key, ...child.val() });
+      });
+
+      // 讓最新新增的顯示在最上方
+      items.reverse();
+
+      let html = '';
+      items.forEach((item) => {
+        html += `
+          <div class="history-item">
+            <div class="history-info">
+              <strong>${item.note}</strong> <small style="color:#666;">(${item.timeStr || ''})</small><br>
+              <small style="color:#888;">座標：${item.lat.toFixed(4)}, ${item.lng.toFixed(4)}</small>
+            </div>
+            <button class="btn-del" onclick="deleteHistoryItem('${item.key}')">刪除</button>
+          </div>
+        `;
+      });
+      historyContainer.innerHTML = html;
+    });
   </script>
 </body>
 </html>
